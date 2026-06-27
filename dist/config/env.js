@@ -34,7 +34,7 @@ exports.env = {
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN,
     JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
     JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN,
-    CLIENT_URL: process.env.CLIENT_URL,
+    CLIENT_URL: process.env.CLIENT_URL.replace(/\/$/, ''),
     SMTP_HOST: process.env.SMTP_HOST || 'smtp.ethereal.email',
     SMTP_PORT: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
     SMTP_USER: process.env.SMTP_USER,
