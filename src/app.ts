@@ -23,6 +23,10 @@ app.use('/api/auth', authRouter);
 app.use('/api/tasks', taskRouter);
 app.use('/api/users', userRouter);
 
+app.get('/', (req, res) => {
+  res.json({ message: 'FlowNop Backend is running' });
+});
+
 // Catch-all 404 handler for undefined routes
 app.use(notFound);
 

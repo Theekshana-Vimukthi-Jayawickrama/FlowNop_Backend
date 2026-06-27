@@ -24,6 +24,9 @@ app.use('/api', health_1.default);
 app.use('/api/auth', authRoutes_1.default);
 app.use('/api/tasks', taskRoutes_1.default);
 app.use('/api/users', userRoutes_1.default);
+app.get('/', (req, res) => {
+    res.json({ message: 'FlowNop Backend is running' });
+});
 // Catch-all 404 handler for undefined routes
 app.use(notFound_1.default);
 // Centralized error handler (must be last)

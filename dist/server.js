@@ -24,4 +24,3 @@ const startServer = async () => {
     }
 };
 startServer();
-// Reload trigger: environment config updated

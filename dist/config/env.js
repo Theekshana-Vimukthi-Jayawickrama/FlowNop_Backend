@@ -8,7 +8,6 @@ const dotenv_1 = __importDefault(require("dotenv"));
 // Load environment variables
 dotenv_1.default.config();
 const REQUIRED_ENV_VARS = [
-    'PORT',
     'MONGO_URI',
     'JWT_SECRET',
     'JWT_EXPIRES_IN',
@@ -28,7 +27,7 @@ if (missingEnvVars.length > 0) {
     throw new Error(errorMessage);
 }
 exports.env = {
-    PORT: parseInt(process.env.PORT, 10),
+    PORT: process.env.PORT || 5000,
     MONGO_URI: process.env.MONGO_URI,
     JWT_SECRET: process.env.JWT_SECRET,
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN,
