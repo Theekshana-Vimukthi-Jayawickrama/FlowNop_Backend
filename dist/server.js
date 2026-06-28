@@ -12,8 +12,13 @@ const startServer = async () => {
     try {
         // Connect to MongoDB Atlas
         await (0, db_1.default)();
-        // Check SMTP Server Connection Status
-        await (0, emailService_1.verifySmtpConnection)();
+        // Initialize SMTP Email Service
+        try {
+            await (0, emailService_1.initializeEmailService)();
+        }
+        catch (emailError) {
+            logger_1.default.error('[SMTP] Failed to initialize email service during startup (will continue running):', emailError);
+        }
         app_1.default.listen(env_1.default.PORT, () => {
             logger_1.default.info(`Server is running on port ${env_1.default.PORT}`);
         });

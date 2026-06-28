@@ -1,14 +1,52 @@
+import dns from 'dns';
 import nodemailer from 'nodemailer';
 import env from '../config/env';
 import logger from '../utils/logger';
 
+// Module-level state variables
+let transporter: nodemailer.Transporter | null = null;
+let smtpStatus: 'disconnected' | 'connecting' | 'connected' | 'simulated' = 'disconnected';
+let lastError: string | null = null;
+let lastChecked: Date | null = null;
+let retryCount = 0;
+let retryTimeout: NodeJS.Timeout | null = null;
+
+/**
+ * Custom DNS lookup prioritizing IPv4, falling back to default resolution on failure.
+ * This resolves issues on environments like Render where IPv6 might be preferred but unreachable.
+ */
+const customLookup = (
+  hostname: string,
+  options: any,
+  callback: (err: NodeJS.ErrnoException | null, address: any, family: number) => void
+): void => {
+  // Pass through local address requests
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    return dns.lookup(hostname, options, callback);
+  }
+
+  const dnsOptions = typeof options === 'object' ? { ...options } : {};
+
+  // Try IPv4 lookup first
+  dns.lookup(hostname, { ...dnsOptions, family: 4 }, (err, address, family) => {
+    if (!err) {
+      callback(null, address, family);
+    } else {
+      logger.warn(`[SMTP] IPv4 lookup failed for ${hostname}, falling back to default lookup order. Error: ${err.message}`);
+      dns.lookup(hostname, options, callback);
+    }
+  });
+};
+
 /**
  * Creates nodemailer transporter. Returns null if SMTP configuration is incomplete.
  */
-const getTransporter = () => {
+const createTransporter = (): nodemailer.Transporter | null => {
   if (!env.SMTP_USER || !env.SMTP_PASS) {
     return null;
   }
+
+  logger.info(`[SMTP] Creating transporter for ${env.SMTP_HOST}:${env.SMTP_PORT} with user ${env.SMTP_USER}`);
 
   return nodemailer.createTransport({
     host: env.SMTP_HOST,
@@ -18,7 +56,87 @@ const getTransporter = () => {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
-  });
+    lookup: customLookup,
+    connectionTimeout: 10000, // 10 seconds connection timeout
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+  } as any);
+};
+
+/**
+ * Attempts connection and verification with the SMTP server.
+ */
+const attemptConnection = async (): Promise<void> => {
+  if (!transporter) {
+    smtpStatus = 'disconnected';
+    lastError = 'Transporter not initialized';
+    return;
+  }
+
+  smtpStatus = 'connecting';
+  lastChecked = new Date();
+  logger.info('[SMTP] Verifying connection to SMTP server...');
+
+  try {
+    await transporter.verify();
+    smtpStatus = 'connected';
+    lastError = null;
+    retryCount = 0; // Reset retries on successful connection
+    logger.info('[SMTP] Connection Status: Online (Connection is working and ready to send emails)');
+  } catch (error: any) {
+    smtpStatus = 'disconnected';
+    lastError = error.message || String(error);
+    logger.error(`[SMTP] Connection Status: Failed. Error: ${lastError}`);
+    scheduleRetry();
+  }
+};
+
+/**
+ * Schedules background reconnection retry with exponential backoff.
+ */
+const scheduleRetry = (): void => {
+  if (retryTimeout) {
+    clearTimeout(retryTimeout);
+  }
+
+  // Calculate exponential backoff delay (5s, 10s, 20s, 40s, 60s, 60s...)
+  const delay = Math.min(5000 * Math.pow(2, retryCount), 60000);
+  retryCount++;
+
+  logger.warn(`[SMTP] Scheduling retry #${retryCount} in ${delay / 1000} seconds...`);
+
+  retryTimeout = setTimeout(async () => {
+    logger.info(`[SMTP] Retrying connection (attempt #${retryCount})...`);
+    await attemptConnection();
+  }, delay);
+};
+
+/**
+ * Initializes SMTP connection on application startup.
+ * Runs asynchronously and does not block the application if it fails.
+ */
+export const initializeEmailService = async (): Promise<void> => {
+  if (!env.SMTP_USER || !env.SMTP_PASS) {
+    smtpStatus = 'simulated';
+    logger.info('[SMTP] Email service initialized in SIMULATION mode (SMTP credentials not configured).');
+    return;
+  }
+
+  try {
+    transporter = createTransporter();
+    if (transporter) {
+      await attemptConnection();
+    } else {
+      smtpStatus = 'disconnected';
+      lastError = 'Failed to create transporter';
+      logger.error('[SMTP] Transporter creation returned null despite credentials being present.');
+    }
+  } catch (error: any) {
+    smtpStatus = 'disconnected';
+    lastError = error.message || String(error);
+    logger.error('[SMTP] Unexpected error during initialization:', error);
+    scheduleRetry();
+  }
 };
 
 interface ISendEmailOptions {
@@ -32,9 +150,7 @@ interface ISendEmailOptions {
  * Sends an email using Nodemailer. Falls back to terminal simulation when SMTP is unconfigured.
  */
 export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
-  const transporter = getTransporter();
-
-  if (!transporter) {
+  if (smtpStatus === 'simulated' || !transporter) {
     logger.info('--- MAIL SIMULATION (No credentials configured) ---');
     logger.info(`To: ${options.to}`);
     logger.info(`Subject: ${options.subject}`);
@@ -44,6 +160,15 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
     }
     logger.info('----------------------------------------------------');
     return;
+  }
+
+  if (smtpStatus !== 'connected') {
+    logger.warn(`[SMTP] Attempted to send email but connection status is: ${smtpStatus}. Retrying connection and throwing error.`);
+    // Trigger reconnection check in case it recovers
+    if (smtpStatus === 'disconnected') {
+      attemptConnection();
+    }
+    throw new Error(`Email service is temporarily unavailable (status: ${smtpStatus}). Please try again later.`);
   }
 
   const mailOptions = {
@@ -57,32 +182,33 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
   try {
     await transporter.sendMail(mailOptions);
     logger.info(`Password reset email successfully sent to: ${options.to}`);
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Error sending email to ${options.to}:`, error);
+    // If we hit a connection issue, transition state and trigger retry
+    smtpStatus = 'disconnected';
+    lastError = error.message || String(error);
+    scheduleRetry();
     throw error;
   }
 };
 
 /**
- * Verifies if the SMTP credentials are correct and connection is active.
+ * Returns current SMTP connection state and monitoring information.
  */
-export const verifySmtpConnection = async (): Promise<void> => {
-  const transporter = getTransporter();
-
-  if (!transporter) {
-    logger.info('[SMTP] Connection Status: Offline (No credentials configured, using email simulation fallback)');
-    return;
-  }
-
-  try {
-    await transporter.verify();
-    logger.info('[SMTP] Connection Status: Online (Connection is working and ready to send emails)');
-  } catch (error: any) {
-    logger.error(`[SMTP] Connection Status: Failed (SMTP connection error: ${error.message || error})`);
-  }
+export const getSmtpStatus = () => {
+  return {
+    status: smtpStatus,
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    lastChecked: lastChecked ? lastChecked.toISOString() : null,
+    error: lastError,
+    retryCount: retryCount,
+  };
 };
 
 export default {
+  initializeEmailService,
   sendEmail,
-  verifySmtpConnection,
+  getSmtpStatus,
 };
+

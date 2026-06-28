@@ -177,6 +177,9 @@ const forgotPassword = async (email) => {
 };
 exports.forgotPassword = forgotPassword;
 const resetPassword = async (token, newPassword) => {
+    if (!token || typeof token !== 'string' || token.trim() === '' || token.length !== 64 || !/^[0-9a-fA-F]+$/.test(token)) {
+        throw new ApiError_1.default(400, 'Password reset token is invalid or has expired');
+    }
     const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
     const user = await User_1.default.findOne({
         resetPasswordToken: hashedToken,

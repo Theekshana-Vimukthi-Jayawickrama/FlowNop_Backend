@@ -198,6 +198,10 @@ export const forgotPassword = async (email: string): Promise<void> => {
 };
 
 export const resetPassword = async (token: string, newPassword: string): Promise<void> => {
+  if (!token || typeof token !== 'string' || token.trim() === '' || token.length !== 64 || !/^[0-9a-fA-F]+$/.test(token)) {
+    throw new ApiError(400, 'Password reset token is invalid or has expired');
+  }
+
   const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
   const user = await User.findOne({

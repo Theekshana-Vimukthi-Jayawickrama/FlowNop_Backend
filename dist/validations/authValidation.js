@@ -28,7 +28,20 @@ exports.registerValidation = [
         .notEmpty()
         .withMessage('Birthday is required')
         .isISO8601()
-        .withMessage('Birthday must be a valid date'),
+        .withMessage('Birthday must be a valid date')
+        .custom((value) => {
+        const birthDate = new Date(value);
+        const today = new Date();
+        let age = today.getFullYear() - birthDate.getFullYear();
+        const m = today.getMonth() - birthDate.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+        }
+        if (age < 18) {
+            throw new Error('You must be at least 18 years old to register');
+        }
+        return true;
+    }),
     (0, express_validator_1.body)('password')
         .notEmpty()
         .withMessage('Password is required')
@@ -124,7 +137,13 @@ exports.forgotPasswordValidation = [
 exports.resetPasswordValidation = [
     (0, express_validator_1.body)('token')
         .notEmpty()
-        .withMessage('Reset token is required'),
+        .withMessage('Reset token is required')
+        .isString()
+        .withMessage('Reset token must be a string')
+        .isHexadecimal()
+        .withMessage('Reset token must be a valid hexadecimal string')
+        .isLength({ min: 64, max: 64 })
+        .withMessage('Reset token must be exactly 64 characters long'),
     (0, express_validator_1.body)('password')
         .notEmpty()
         .withMessage('Password is required')
