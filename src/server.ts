@@ -1,3 +1,8 @@
+import dns from 'dns';
+// Force Node's DNS resolver to prioritize IPv4 addresses over IPv6.
+// This prevents ENETUNREACH errors in environments where IPv6 is configured/resolved but unreachable.
+dns.setDefaultResultOrder('ipv4first');
+
 import env from './config/env';
 import app from './app';
 import connectDB from './config/db';

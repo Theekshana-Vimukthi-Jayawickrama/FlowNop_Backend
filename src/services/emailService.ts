@@ -1,4 +1,3 @@
-import dns from 'dns';
 import nodemailer from 'nodemailer';
 import env from '../config/env';
 import logger from '../utils/logger';
@@ -10,33 +9,6 @@ let lastError: string | null = null;
 let lastChecked: Date | null = null;
 let retryCount = 0;
 let retryTimeout: NodeJS.Timeout | null = null;
-
-/**
- * Custom DNS lookup prioritizing IPv4, falling back to default resolution on failure.
- * This resolves issues on environments like Render where IPv6 might be preferred but unreachable.
- */
-const customLookup = (
-  hostname: string,
-  options: any,
-  callback: (err: NodeJS.ErrnoException | null, address: any, family: number) => void
-): void => {
-  // Pass through local address requests
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-    return dns.lookup(hostname, options, callback);
-  }
-
-  const dnsOptions = typeof options === 'object' ? { ...options } : {};
-
-  // Try IPv4 lookup first
-  dns.lookup(hostname, { ...dnsOptions, family: 4 }, (err, address, family) => {
-    if (!err) {
-      callback(null, address, family);
-    } else {
-      logger.warn(`[SMTP] IPv4 lookup failed for ${hostname}, falling back to default lookup order. Error: ${err.message}`);
-      dns.lookup(hostname, options, callback);
-    }
-  });
-};
 
 /**
  * Creates nodemailer transporter. Returns null if SMTP configuration is incomplete.
@@ -56,7 +28,6 @@ const createTransporter = (): nodemailer.Transporter | null => {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
-    lookup: customLookup,
     connectionTimeout: 10000, // 10 seconds connection timeout
     greetingTimeout: 10000,
     socketTimeout: 10000,
