@@ -42,6 +42,22 @@ TaskFlow allows organizations to assign, organize, and monitor tasks. Key applic
 
 ---
 
+## How the System Works
+
+The system allows users to register by filling out a sign-up form. After registration, users can log in to the system using their email and password. If a user forgets their password, they can use the "Forgot Password" option to receive a password reset link via email, supported by an integrated email service.
+
+The system includes role-based access with three main roles: Super Admin, Admin, and Standard User.
+
+- <b>The Super Admin</b> has the highest level of control. They can create admin accounts and manage all users in the system. Super Admin can also assign tasks to standard users and view all tasks created by admins. In addition, Super Admin has the authority to approve any task in the system. When a Super Admin approves a task, it is marked as "Super Admin Approved" and also appears in the respective admin's approved task view with an "Approved By" field showing the Super Admin as the approver. Super Admin can also disable both admin and standard user accounts.
+- <b>Admins</b> can manage standard users and assign tasks to them. Admins can also disable standard users. However, if an admin is disabled, they will not be able to create or approve tasks. Only active admins can perform task management operations.
+- <b>Standard users</b> receive tasks assigned by admins or the Super Admin. They can work on tasks, update progress, and mark tasks as completed once finished. After completion, tasks must be approved either by the assigned admin or the Super Admin before being considered fully approved.
+
+The system organizes tasks in a role-based manner. Users see only their own tasks, admins see tasks related to their assigned users, and the Super Admin can view all tasks in the system. Additionally, there is a separate "All Tasks" tab that displays every task for monitoring and oversight purposes.
+
+The application allows users to switch between Light Mode and Dark Mode, as well as see their profile information. This structure ensures proper task flow, accountability, and hierarchical approval control across the system.
+
+---
+
 ## Tech Stack and Dependencies
 
 ### Frontend (/frontend)
