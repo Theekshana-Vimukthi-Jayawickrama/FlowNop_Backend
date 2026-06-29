@@ -9,6 +9,7 @@ let lastError: string | null = null;
 let lastChecked: Date | null = null;
 let retryCount = 0;
 let retryTimeout: NodeJS.Timeout | null = null;
+const MAX_RETRIES = 3;
 
 /**
  * Creates nodemailer transporter. Returns null if SMTP configuration is incomplete.
@@ -70,14 +71,22 @@ const scheduleRetry = (): void => {
     clearTimeout(retryTimeout);
   }
 
-  // Calculate exponential backoff delay (5s, 10s, 20s, 40s, 60s, 60s...)
+  if (retryCount >= MAX_RETRIES) {
+    logger.warn(`[SMTP] Max retries (${MAX_RETRIES}) reached. Falling back to SIMULATION mode. Emails will be logged to console instead of being sent.`);
+    smtpStatus = 'simulated';
+    transporter = null;
+    lastError = `SMTP unavailable after ${MAX_RETRIES} retries — running in simulation mode`;
+    return;
+  }
+
+  // Calculate exponential backoff delay (5s, 10s, 20s)
   const delay = Math.min(5000 * Math.pow(2, retryCount), 60000);
   retryCount++;
 
-  logger.warn(`[SMTP] Scheduling retry #${retryCount} in ${delay / 1000} seconds...`);
+  logger.warn(`[SMTP] Scheduling retry #${retryCount}/${MAX_RETRIES} in ${delay / 1000} seconds...`);
 
   retryTimeout = setTimeout(async () => {
-    logger.info(`[SMTP] Retrying connection (attempt #${retryCount})...`);
+    logger.info(`[SMTP] Retrying connection (attempt #${retryCount}/${MAX_RETRIES})...`);
     await attemptConnection();
   }, delay);
 };
@@ -96,7 +105,11 @@ export const initializeEmailService = async (): Promise<void> => {
   try {
     transporter = createTransporter();
     if (transporter) {
-      await attemptConnection();
+      // Non-blocking: attempt connection in the background so the server starts immediately
+      attemptConnection().catch((err) => {
+        logger.error('[SMTP] Background connection attempt failed:', err);
+      });
+      logger.info('[SMTP] Email service initialization started (connecting in background).');
     } else {
       smtpStatus = 'disconnected';
       lastError = 'Failed to create transporter';
