@@ -10,7 +10,7 @@ const validateAssigneesAreUsers = async (ids: string[]): Promise<void> => {
   if (ids.length === 0) return;
 
   const uniqueIds = [...new Set(ids)];
-  const users = await User.find({ _id: { $in: uniqueIds } }).select('_id role');
+  const users = await User.find({ _id: { $in: uniqueIds } }).select('_id role isDisabled');
 
   if (users.length !== uniqueIds.length) {
     throw new ApiError(400, 'One or more assigned user IDs are invalid.');
@@ -19,6 +19,11 @@ const validateAssigneesAreUsers = async (ids: string[]): Promise<void> => {
   const nonUsers = users.filter((u) => u.role !== 'user');
   if (nonUsers.length > 0) {
     throw new ApiError(400, 'Tasks can only be assigned to users, not admins.');
+  }
+
+  const disabledUsers = users.filter((u) => u.isDisabled === true);
+  if (disabledUsers.length > 0) {
+    throw new ApiError(400, 'Tasks cannot be assigned to disabled users.');
   }
 };
 
