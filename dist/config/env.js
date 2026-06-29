@@ -36,5 +36,6 @@ exports.env = {
     CLIENT_URL: process.env.CLIENT_URL.replace(/\/$/, ''),
     BREVO_API_KEY: process.env.BREVO_API_KEY,
     BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'FlowNop <no-reply@flownop.com>',
+    BREVO_SMTP_USER: process.env.BREVO_SMTP_USER,
 };
 exports.default = exports.env;

@@ -266,9 +266,14 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
  * Returns current email service status and monitoring information.
  */
 export const getSmtpStatus = () => {
+  const keyPrefix = env.BREVO_API_KEY 
+    ? `${env.BREVO_API_KEY.trim().substring(0, 8)}...` 
+    : 'not_configured';
+
   return {
     status: emailStatus,
     provider: emailMode === 'api' ? 'Brevo REST API' : emailMode === 'smtp' ? 'Brevo SMTP Relay' : 'Simulation',
+    keyPrefix: keyPrefix,
     lastChecked: lastChecked ? lastChecked.toISOString() : null,
     error: lastError,
   };
