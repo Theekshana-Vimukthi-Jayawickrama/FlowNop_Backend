@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 
-// Load environment variables only in non-production environments
-if (process.env.NODE_ENV !== 'production') {
+// Load environment variables only in non-production and non-Render environments
+if (process.env.NODE_ENV !== 'production' && process.env.RENDER !== 'true') {
   dotenv.config();
 }
 
