@@ -85,24 +85,28 @@ export const listTasks = async (user: IUser, query: any): Promise<IListTasksResu
   }
 
   // 1. Apply role scope restrictions
+  const isSuperAdmin = user.email.toLowerCase() === 'superadminflownop@gmail.com';
   if (user.role !== 'admin') {
     // Users see tasks where they are primary assigned or sub-assigned
     filter.$or = [
       { assignedTo: user._id },
       { subAssignedTo: user._id },
     ];
-  } else {
-    // Admins see only tasks they created
+  } else if (!isSuperAdmin) {
+    // Regular Admins see only tasks they created (or approved)
     if (approved === 'true') {
-      // On approved page, admins see tasks they created or approved
       filter.$or = [
         { createdBy: user._id },
         { approvedByAdmin: user.name },
       ];
     } else {
-      // On in-progress page, admins see only tasks they created
       filter.createdBy = user._id;
     }
+  } else {
+    // Super Admin:
+    // Approved tab: sees all approved tasks.
+    // In-Progress tab: sees all in-progress/unapproved tasks.
+    // No createdBy/approvedByAdmin filters applied.
   }
 
   if (search) {
@@ -372,9 +376,12 @@ export const approveTask = async (user: IUser, id: string): Promise<ITask> => {
     throw new ApiError(403, 'Access denied. Only admins can approve tasks.');
   }
 
-  // Only the admin/super admin who created the task can approve it
-  if (task.createdBy.toString() !== user._id.toString()) {
-    throw new ApiError(403, 'Access denied. Only the admin who created this task can approve it.');
+  const isSuperAdmin = user.email.toLowerCase() === 'superadminflownop@gmail.com';
+  const isCreator = task.createdBy.toString() === user._id.toString();
+
+  // Only the task's assigned admin (creator) and the Super Admin are authorized to approve
+  if (!isCreator && !isSuperAdmin) {
+    throw new ApiError(403, "Access denied. Only the task's assigned admin or the Super Admin are authorized to approve it.");
   }
 
   if (task.status !== 'done') {
@@ -382,7 +389,12 @@ export const approveTask = async (user: IUser, id: string): Promise<ITask> => {
   }
 
   task.approved = true;
-  task.approvedByAdmin = user.name;
+  if (isSuperAdmin) {
+    task.approvedByAdmin = 'Super Admin';
+    task.status = 'Super Admin Approved';
+  } else {
+    task.approvedByAdmin = user.name;
+  }
   await task.save();
 
   const updatedTask = await Task.findById(id)

@@ -10,7 +10,7 @@ export interface ITask extends Document {
   title: string;
   description?: string;
   priority: 'low' | 'medium' | 'high';
-  status: 'open' | 'in_progress' | 'testing' | 'done';
+  status: 'open' | 'in_progress' | 'testing' | 'done' | 'Super Admin Approved';
   dueDate?: Date;
   createdBy: mongoose.Types.ObjectId;
   assignedTo?: mongoose.Types.ObjectId;
@@ -66,7 +66,7 @@ const TaskSchema = new Schema<ITask>(
     status: {
       type: String,
       enum: {
-        values: ['open', 'in_progress', 'testing', 'done'],
+        values: ['open', 'in_progress', 'testing', 'done', 'Super Admin Approved'],
         message: '{VALUE} is not a valid status',
       },
       default: 'open',
