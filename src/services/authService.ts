@@ -89,6 +89,10 @@ export const refresh = async (oldRefreshToken: string): Promise<{ token: string;
     throw new ApiError(401, 'Access denied. Refresh token is not valid.');
   }
 
+  if (user.isDisabled) {
+    throw new ApiError(403, 'Access denied. Your account is disabled.');
+  }
+
   // Generate new access and refresh tokens (Rotation)
   const token = signToken({ id: user._id.toString(), role: user.role });
   const newRefreshToken = signRefreshToken({ id: user._id.toString(), role: user.role });
