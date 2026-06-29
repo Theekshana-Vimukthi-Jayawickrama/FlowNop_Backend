@@ -36,9 +36,14 @@ export const env = {
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET!,
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN!,
   CLIENT_URL: process.env.CLIENT_URL!.replace(/\/$/, ''),
+  BREVO_EMAIL_MODE: process.env.BREVO_EMAIL_MODE || 'api',
   BREVO_API_KEY: process.env.BREVO_API_KEY,
+  BREVO_SMTP_HOST: process.env.BREVO_SMTP_HOST || 'smtp-relay.brevo.com',
+  BREVO_SMTP_PORT: process.env.BREVO_SMTP_PORT || '2525',
+  BREVO_SMTP_SECURE: process.env.BREVO_SMTP_SECURE || 'false',
   BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || 'FlowNop <no-reply@flownop.com>',
-  BREVO_SMTP_USER: process.env.BREVO_SMTP_USER,
+  BREVO_SMTP_USER: process.env.BREVO_SMTP_USER, // Trigger restart config load
+  BREVO_SMTP_PASSWORD: process.env.BREVO_SMTP_PASSWORD,
 };
 
 export default env;

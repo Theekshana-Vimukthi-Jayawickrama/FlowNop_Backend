@@ -3,6 +3,8 @@ import logger from '../utils/logger';
 import nodemailer from 'nodemailer';
 
 const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+const DEFAULT_SMTP_HOST = 'smtp-relay.brevo.com';
+const DEFAULT_SMTP_PORT = 2525;
 
 type EmailMode = 'api' | 'smtp' | 'simulated';
 type EmailStatus = 'ready' | 'connecting' | 'disconnected' | 'simulated';
@@ -22,6 +24,27 @@ const getSenderDetails = () => {
   const senderName = fromMatch ? fromMatch[1] : 'FlowNop';
   const senderEmail = fromMatch ? fromMatch[2] : env.BREVO_SENDER_EMAIL;
   return { name: senderName, email: senderEmail };
+};
+
+const parseSmtpPort = (value: string | undefined): number => {
+  if (!value) {
+    return DEFAULT_SMTP_PORT;
+  }
+
+  const parsedPort = Number.parseInt(value, 10);
+  if (Number.isNaN(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+    logger.warn(`[Email] Invalid BREVO_SMTP_PORT "${value}". Falling back to ${DEFAULT_SMTP_PORT}.`);
+    return DEFAULT_SMTP_PORT;
+  }
+
+  return parsedPort;
+};
+
+const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined) {
+    return fallback;
+  }
+  return value.toLowerCase() === 'true';
 };
 
 /**
@@ -82,7 +105,7 @@ const scheduleSmtpRetry = (): void => {
 
 /**
  * Initializes the Brevo email service.
- * Automatically chooses between REST API and SMTP depending on the format of the key.
+ * Mode is controlled by BREVO_EMAIL_MODE (api|smtp), defaults to api.
  */
 export const initializeEmailService = async (): Promise<void> => {
   // Clear any existing timeouts/transporters in case of re-init
@@ -93,29 +116,46 @@ export const initializeEmailService = async (): Promise<void> => {
   transporter = null;
   retryCount = 0;
 
-  if (!env.BREVO_API_KEY) {
-    emailMode = 'simulated';
-    emailStatus = 'simulated';
-    logger.info('[Email] Email service initialized in SIMULATION mode (BREVO_API_KEY not configured).');
-    return;
-  }
+  const configuredMode = env.BREVO_EMAIL_MODE?.toLowerCase() === 'smtp' ? 'smtp' : 'api';
+  const apiKey = env.BREVO_API_KEY?.trim() || '';
+  const smtpPassword = env.BREVO_SMTP_PASSWORD?.trim() || '';
 
-  const apiKey = env.BREVO_API_KEY.trim();
+  if (configuredMode === 'smtp') {
+    if (!smtpPassword && !apiKey.startsWith('xsmtpsib-')) {
+      emailMode = 'simulated';
+      emailStatus = 'simulated';
+      lastError = 'SMTP mode selected but no SMTP relay key configured';
+      logger.error('[Email] SMTP mode selected but credentials are missing. Falling back to SIMULATION mode.');
+      return;
+    }
 
-  // If the key starts with 'xsmtpsib-', it is an SMTP key
-  if (apiKey.startsWith('xsmtpsib-')) {
     emailMode = 'smtp';
     const { email: senderEmail } = getSenderDetails();
+    const smtpHost = env.BREVO_SMTP_HOST || DEFAULT_SMTP_HOST;
+    const smtpPort = parseSmtpPort(env.BREVO_SMTP_PORT);
+    const smtpSecure = parseBoolean(env.BREVO_SMTP_SECURE, smtpPort === 465);
     const smtpUser = env.BREVO_SMTP_USER || senderEmail;
+    const smtpPass = smtpPassword || apiKey;
 
-    logger.info(`[Email] Detected Brevo SMTP key. Initializing SMTP relay with user: ${smtpUser}`);
+    if (!smtpUser || !smtpPass) {
+      emailStatus = 'simulated';
+      emailMode = 'simulated';
+      lastError = 'Missing BREVO_SMTP_USER or BREVO_SMTP_PASSWORD for SMTP mode';
+      logger.error('[Email] SMTP selected but credentials are incomplete. Falling back to SIMULATION mode.');
+      return;
+    }
+
+    logger.info(
+      `[Email] Initializing Brevo SMTP relay ${smtpHost}:${smtpPort} (secure=${smtpSecure}) with user: ${smtpUser}`
+    );
 
     transporter = nodemailer.createTransport({
-      host: 'smtp-relay.brevo.com',
-      port: 587,
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
       auth: {
         user: smtpUser,
-        pass: apiKey,
+        pass: smtpPass,
       },
       connectionTimeout: 10000,
       greetingTimeout: 10000,
@@ -129,7 +169,14 @@ export const initializeEmailService = async (): Promise<void> => {
     return;
   }
 
-  // Otherwise, assume it is a REST API key (usually starts with 'xkeysib-')
+  // API mode (default on Render to avoid SMTP port restrictions)
+  if (!apiKey) {
+    emailMode = 'simulated';
+    emailStatus = 'simulated';
+    logger.info('[Email] Email service initialized in SIMULATION mode (BREVO_API_KEY not configured for API mode).');
+    return;
+  }
+
   emailMode = 'api';
   try {
     const response = await fetch('https://api.brevo.com/v3/account', {
@@ -174,7 +221,7 @@ interface ISendEmailOptions {
  * Sends an email using either Brevo REST API or Nodemailer SMTP, depending on current mode.
  */
 export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
-  if (emailStatus === 'simulated' || emailMode === 'simulated' || !env.BREVO_API_KEY) {
+  if (emailStatus === 'simulated' || emailMode === 'simulated') {
     logger.info('--- MAIL SIMULATION (Brevo API key not configured or fallback active) ---');
     logger.info(`To: ${options.to}`);
     logger.info(`Subject: ${options.subject}`);
@@ -219,6 +266,11 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
   }
 
   // REST API Mode
+  const brevoApiKey = env.BREVO_API_KEY?.trim();
+  if (!brevoApiKey) {
+    throw new Error('Brevo API mode selected but BREVO_API_KEY is not configured.');
+  }
+
   const payload = {
     sender: {
       name: senderName,
@@ -238,7 +290,7 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
     const response = await fetch(BREVO_API_URL, {
       method: 'POST',
       headers: {
-        'api-key': env.BREVO_API_KEY.trim(),
+        'api-key': brevoApiKey,
         'Content-Type': 'application/json',
         'accept': 'application/json',
       },
@@ -266,14 +318,18 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
  * Returns current email service status and monitoring information.
  */
 export const getSmtpStatus = () => {
-  const keyPrefix = env.BREVO_API_KEY 
-    ? `${env.BREVO_API_KEY.trim().substring(0, 8)}...` 
+  const activeCredential = env.BREVO_SMTP_PASSWORD?.trim() || env.BREVO_API_KEY?.trim();
+  const keyPrefix = activeCredential
+    ? `${activeCredential.substring(0, 8)}...`
     : 'not_configured';
 
   return {
     status: emailStatus,
     provider: emailMode === 'api' ? 'Brevo REST API' : emailMode === 'smtp' ? 'Brevo SMTP Relay' : 'Simulation',
     keyPrefix: keyPrefix,
+    smtpHost: env.BREVO_SMTP_HOST || DEFAULT_SMTP_HOST,
+    smtpPort: parseSmtpPort(env.BREVO_SMTP_PORT),
+    smtpUser: env.BREVO_SMTP_USER || getSenderDetails().email,
     lastChecked: lastChecked ? lastChecked.toISOString() : null,
     error: lastError,
   };

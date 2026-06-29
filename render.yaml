@@ -21,7 +21,19 @@ services:
         value: 7d
       - key: CLIENT_URL
         value: https://fancy-kataifi-a5eefe.netlify.app
+      - key: BREVO_EMAIL_MODE
+        value: api
       - key: BREVO_API_KEY
         sync: false
       - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SMTP_HOST
+        value: smtp-relay.brevo.com
+      - key: BREVO_SMTP_PORT
+        value: "2525"
+      - key: BREVO_SMTP_SECURE
+        value: "false"
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASSWORD
         sync: false
