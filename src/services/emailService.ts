@@ -20,9 +20,16 @@ const MAX_RETRIES = 3;
 
 // Parse the "from" field: "Name <email>" or just "email"
 const getSenderDetails = () => {
-  const fromMatch = env.BREVO_SENDER_EMAIL.match(/^"?(.+?)"?\s*<(.+?)>$/);
-  const senderName = fromMatch ? fromMatch[1] : 'FlowNop';
-  const senderEmail = fromMatch ? fromMatch[2] : env.BREVO_SENDER_EMAIL;
+  let cleaned = env.BREVO_SENDER_EMAIL.trim();
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+  } else if (cleaned.startsWith("'") && cleaned.endsWith("'")) {
+    cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+  }
+
+  const fromMatch = cleaned.match(/^"?(.+?)"?\s*<(.+?)>$/);
+  const senderName = fromMatch ? fromMatch[1].trim() : 'FlowNop';
+  const senderEmail = fromMatch ? fromMatch[2].trim() : cleaned;
   return { name: senderName, email: senderEmail };
 };
 
