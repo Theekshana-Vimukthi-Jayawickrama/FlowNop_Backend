@@ -8,8 +8,8 @@ router.get('/health', (req, res) => {
 });
 router.get('/health/email', (req, res) => {
     const smtpStatus = (0, emailService_1.getSmtpStatus)();
-    // simulated or connected counts as healthy
-    const isHealthy = smtpStatus.status === 'connected' || smtpStatus.status === 'simulated';
+    // ready or simulated counts as healthy
+    const isHealthy = smtpStatus.status === 'ready' || smtpStatus.status === 'simulated';
     const statusCode = isHealthy ? 200 : 503;
     res.status(statusCode).json({
         success: isHealthy,

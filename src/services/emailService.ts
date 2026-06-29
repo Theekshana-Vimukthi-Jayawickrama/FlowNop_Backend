@@ -1,125 +1,165 @@
-import nodemailer from 'nodemailer';
 import env from '../config/env';
 import logger from '../utils/logger';
+import nodemailer from 'nodemailer';
 
-// Module-level state variables
-let transporter: nodemailer.Transporter | null = null;
-let smtpStatus: 'disconnected' | 'connecting' | 'connected' | 'simulated' = 'disconnected';
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+
+type EmailMode = 'api' | 'smtp' | 'simulated';
+type EmailStatus = 'ready' | 'connecting' | 'disconnected' | 'simulated';
+
+let emailMode: EmailMode = 'simulated';
+let emailStatus: EmailStatus = 'simulated';
 let lastError: string | null = null;
 let lastChecked: Date | null = null;
+let transporter: nodemailer.Transporter | null = null;
 let retryCount = 0;
 let retryTimeout: NodeJS.Timeout | null = null;
 const MAX_RETRIES = 3;
 
-/**
- * Creates nodemailer transporter. Returns null if SMTP configuration is incomplete.
- */
-const createTransporter = (): nodemailer.Transporter | null => {
-  if (!env.SMTP_USER || !env.SMTP_PASS) {
-    return null;
-  }
-
-  logger.info(`[SMTP] Creating transporter for ${env.SMTP_HOST}:${env.SMTP_PORT} with user ${env.SMTP_USER}`);
-
-  return nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: env.SMTP_PORT === 465, // True for 465, false for other ports
-    auth: {
-      user: env.SMTP_USER,
-      pass: env.SMTP_PASS,
-    },
-    connectionTimeout: 10000, // 10 seconds connection timeout
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  } as any);
+// Parse the "from" field: "Name <email>" or just "email"
+const getSenderDetails = () => {
+  const fromMatch = env.BREVO_SENDER_EMAIL.match(/^"?(.+?)"?\s*<(.+?)>$/);
+  const senderName = fromMatch ? fromMatch[1] : 'FlowNop';
+  const senderEmail = fromMatch ? fromMatch[2] : env.BREVO_SENDER_EMAIL;
+  return { name: senderName, email: senderEmail };
 };
 
 /**
  * Attempts connection and verification with the SMTP server.
  */
-const attemptConnection = async (): Promise<void> => {
+const attemptSmtpConnection = async (): Promise<void> => {
   if (!transporter) {
-    smtpStatus = 'disconnected';
+    emailStatus = 'disconnected';
     lastError = 'Transporter not initialized';
     return;
   }
 
-  smtpStatus = 'connecting';
+  emailStatus = 'connecting';
   lastChecked = new Date();
-  logger.info('[SMTP] Verifying connection to SMTP server...');
+  logger.info('[Email] Verifying connection to Brevo SMTP server...');
 
   try {
     await transporter.verify();
-    smtpStatus = 'connected';
+    emailStatus = 'ready';
     lastError = null;
     retryCount = 0; // Reset retries on successful connection
-    logger.info('[SMTP] Connection Status: Online (Connection is working and ready to send emails)');
+    logger.info('[Email] Brevo SMTP Connection Status: Online (Connection is working and ready to send emails)');
   } catch (error: any) {
-    smtpStatus = 'disconnected';
+    emailStatus = 'disconnected';
     lastError = error.message || String(error);
-    logger.error(`[SMTP] Connection Status: Failed. Error: ${lastError}`);
-    scheduleRetry();
+    logger.error(`[Email] Brevo SMTP Connection Status: Failed. Error: ${lastError}`);
+    scheduleSmtpRetry();
   }
 };
 
 /**
- * Schedules background reconnection retry with exponential backoff.
+ * Schedules background SMTP reconnection retry with exponential backoff.
  */
-const scheduleRetry = (): void => {
+const scheduleSmtpRetry = (): void => {
   if (retryTimeout) {
     clearTimeout(retryTimeout);
   }
 
   if (retryCount >= MAX_RETRIES) {
-    logger.warn(`[SMTP] Max retries (${MAX_RETRIES}) reached. Falling back to SIMULATION mode. Emails will be logged to console instead of being sent.`);
-    smtpStatus = 'simulated';
+    logger.warn(`[Email] SMTP Max retries (${MAX_RETRIES}) reached. Falling back to SIMULATION mode. Emails will be logged to console instead of being sent.`);
+    emailStatus = 'simulated';
+    emailMode = 'simulated';
     transporter = null;
     lastError = `SMTP unavailable after ${MAX_RETRIES} retries — running in simulation mode`;
     return;
   }
 
-  // Calculate exponential backoff delay (5s, 10s, 20s)
   const delay = Math.min(5000 * Math.pow(2, retryCount), 60000);
   retryCount++;
 
-  logger.warn(`[SMTP] Scheduling retry #${retryCount}/${MAX_RETRIES} in ${delay / 1000} seconds...`);
+  logger.warn(`[Email] Scheduling SMTP retry #${retryCount}/${MAX_RETRIES} in ${delay / 1000} seconds...`);
 
   retryTimeout = setTimeout(async () => {
-    logger.info(`[SMTP] Retrying connection (attempt #${retryCount}/${MAX_RETRIES})...`);
-    await attemptConnection();
+    logger.info(`[Email] Retrying Brevo SMTP connection (attempt #${retryCount}/${MAX_RETRIES})...`);
+    await attemptSmtpConnection();
   }, delay);
 };
 
 /**
- * Initializes SMTP connection on application startup.
- * Runs asynchronously and does not block the application if it fails.
+ * Initializes the Brevo email service.
+ * Automatically chooses between REST API and SMTP depending on the format of the key.
  */
 export const initializeEmailService = async (): Promise<void> => {
-  if (!env.SMTP_USER || !env.SMTP_PASS) {
-    smtpStatus = 'simulated';
-    logger.info('[SMTP] Email service initialized in SIMULATION mode (SMTP credentials not configured).');
+  // Clear any existing timeouts/transporters in case of re-init
+  if (retryTimeout) {
+    clearTimeout(retryTimeout);
+    retryTimeout = null;
+  }
+  transporter = null;
+  retryCount = 0;
+
+  if (!env.BREVO_API_KEY) {
+    emailMode = 'simulated';
+    emailStatus = 'simulated';
+    logger.info('[Email] Email service initialized in SIMULATION mode (BREVO_API_KEY not configured).');
     return;
   }
 
+  const apiKey = env.BREVO_API_KEY.trim();
+
+  // If the key starts with 'xsmtpsib-', it is an SMTP key
+  if (apiKey.startsWith('xsmtpsib-')) {
+    emailMode = 'smtp';
+    const { email: senderEmail } = getSenderDetails();
+    const smtpUser = env.BREVO_SMTP_USER || senderEmail;
+
+    logger.info(`[Email] Detected Brevo SMTP key. Initializing SMTP relay with user: ${smtpUser}`);
+
+    transporter = nodemailer.createTransport({
+      host: 'smtp-relay.brevo.com',
+      port: 587,
+      auth: {
+        user: smtpUser,
+        pass: apiKey,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
+    });
+
+    // Non-blocking: attempt connection in background
+    attemptSmtpConnection().catch((err) => {
+      logger.error('[Email] Background SMTP connection attempt failed:', err);
+    });
+    return;
+  }
+
+  // Otherwise, assume it is a REST API key (usually starts with 'xkeysib-')
+  emailMode = 'api';
   try {
-    transporter = createTransporter();
-    if (transporter) {
-      // Non-blocking: attempt connection in the background so the server starts immediately
-      attemptConnection().catch((err) => {
-        logger.error('[SMTP] Background connection attempt failed:', err);
-      });
-      logger.info('[SMTP] Email service initialization started (connecting in background).');
+    const response = await fetch('https://api.brevo.com/v3/account', {
+      method: 'GET',
+      headers: {
+        'api-key': apiKey,
+        'accept': 'application/json',
+      },
+    });
+
+    if (response.ok) {
+      emailStatus = 'ready';
+      lastError = null;
+      lastChecked = new Date();
+      const data = await response.json() as any;
+      logger.info(`[Email] Brevo API connected successfully. Account: ${data.email || 'unknown'}`);
     } else {
-      smtpStatus = 'disconnected';
-      lastError = 'Failed to create transporter';
-      logger.error('[SMTP] Transporter creation returned null despite credentials being present.');
+      const errorData = await response.text();
+      emailStatus = 'simulated';
+      emailMode = 'simulated';
+      lastError = `Brevo API returned ${response.status}: ${errorData}`;
+      lastChecked = new Date();
+      logger.error(`[Email] Brevo API key validation failed (${response.status}). Falling back to SIMULATION mode.`);
     }
   } catch (error: any) {
-    smtpStatus = 'disconnected';
+    emailStatus = 'simulated';
+    emailMode = 'simulated';
     lastError = error.message || String(error);
-    logger.error('[SMTP] Unexpected error during initialization:', error);
-    scheduleRetry();
+    lastChecked = new Date();
+    logger.error('[Email] Failed to validate Brevo API key. Falling back to SIMULATION mode:', error.message);
   }
 };
 
@@ -131,11 +171,11 @@ interface ISendEmailOptions {
 }
 
 /**
- * Sends an email using Nodemailer. Falls back to terminal simulation when SMTP is unconfigured.
+ * Sends an email using either Brevo REST API or Nodemailer SMTP, depending on current mode.
  */
 export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
-  if (smtpStatus === 'simulated' || !transporter) {
-    logger.info('--- MAIL SIMULATION (No credentials configured) ---');
+  if (emailStatus === 'simulated' || emailMode === 'simulated' || !env.BREVO_API_KEY) {
+    logger.info('--- MAIL SIMULATION (Brevo API key not configured or fallback active) ---');
     logger.info(`To: ${options.to}`);
     logger.info(`Subject: ${options.subject}`);
     logger.info(`Text Body:\n${options.text}`);
@@ -146,47 +186,91 @@ export const sendEmail = async (options: ISendEmailOptions): Promise<void> => {
     return;
   }
 
-  if (smtpStatus !== 'connected') {
-    logger.warn(`[SMTP] Attempted to send email but connection status is: ${smtpStatus}. Retrying connection and throwing error.`);
-    // Trigger reconnection check in case it recovers
-    if (smtpStatus === 'disconnected') {
-      attemptConnection();
+  const { name: senderName, email: senderEmail } = getSenderDetails();
+
+  if (emailMode === 'smtp') {
+    if (emailStatus !== 'ready' || !transporter) {
+      logger.warn(`[Email] Attempted to send email but SMTP connection status is: ${emailStatus}. Retrying connection.`);
+      if (emailStatus === 'disconnected') {
+        attemptSmtpConnection().catch(() => {});
+      }
+      throw new Error(`Email service is temporarily offline (status: ${emailStatus}). Please try again later.`);
     }
-    throw new Error(`Email service is temporarily unavailable (status: ${smtpStatus}). Please try again later.`);
+
+    const mailOptions = {
+      from: `"${senderName}" <${senderEmail}>`,
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+    };
+
+    try {
+      await transporter.sendMail(mailOptions);
+      logger.info(`[Email] Email successfully sent via SMTP to: ${options.to}`);
+    } catch (error: any) {
+      logger.error(`[Email] Error sending email via SMTP to ${options.to}:`, error);
+      emailStatus = 'disconnected';
+      lastError = error.message || String(error);
+      scheduleSmtpRetry();
+      throw error;
+    }
+    return;
   }
 
-  const mailOptions = {
-    from: env.SMTP_FROM,
-    to: options.to,
+  // REST API Mode
+  const payload = {
+    sender: {
+      name: senderName,
+      email: senderEmail,
+    },
+    to: [
+      {
+        email: options.to,
+      },
+    ],
     subject: options.subject,
-    text: options.text,
-    html: options.html,
+    textContent: options.text,
+    htmlContent: options.html || undefined,
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    logger.info(`Password reset email successfully sent to: ${options.to}`);
+    const response = await fetch(BREVO_API_URL, {
+      method: 'POST',
+      headers: {
+        'api-key': env.BREVO_API_KEY.trim(),
+        'Content-Type': 'application/json',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as any;
+      logger.info(`[Email] Email successfully sent via API to: ${options.to} (messageId: ${data.messageId || 'N/A'})`);
+    } else {
+      const errorData = await response.text();
+      logger.error(`[Email] Brevo API error (${response.status}) sending to ${options.to}: ${errorData}`);
+      throw new Error(`Brevo API error (${response.status}): ${errorData}`);
+    }
   } catch (error: any) {
-    logger.error(`Error sending email to ${options.to}:`, error);
-    // If we hit a connection issue, transition state and trigger retry
-    smtpStatus = 'disconnected';
-    lastError = error.message || String(error);
-    scheduleRetry();
-    throw error;
+    if (error.message?.startsWith('Brevo API error')) {
+      throw error;
+    }
+    logger.error(`[Email] Network error sending email via API to ${options.to}:`, error);
+    throw new Error(`Failed to send email: ${error.message}`);
   }
 };
 
 /**
- * Returns current SMTP connection state and monitoring information.
+ * Returns current email service status and monitoring information.
  */
 export const getSmtpStatus = () => {
   return {
-    status: smtpStatus,
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
+    status: emailStatus,
+    provider: emailMode === 'api' ? 'Brevo REST API' : emailMode === 'smtp' ? 'Brevo SMTP Relay' : 'Simulation',
     lastChecked: lastChecked ? lastChecked.toISOString() : null,
     error: lastError,
-    retryCount: retryCount,
   };
 };
 
@@ -195,4 +279,3 @@ export default {
   sendEmail,
   getSmtpStatus,
 };
-

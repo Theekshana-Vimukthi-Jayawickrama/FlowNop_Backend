@@ -3,6 +3,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const dns_1 = __importDefault(require("dns"));
+// Force Node's DNS resolver to prioritize IPv4 addresses over IPv6.
+// This prevents ENETUNREACH errors in environments where IPv6 is configured/resolved but unreachable.
+dns_1.default.setDefaultResultOrder('ipv4first');
 const env_1 = __importDefault(require("./config/env"));
 const app_1 = __importDefault(require("./app"));
 const db_1 = __importDefault(require("./config/db"));
